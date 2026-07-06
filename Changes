@@ -5,3 +5,5 @@ Revision history for RPi-PCA9685
     - Added the OO Perl interface; pure Perl, with the I2C transport
       provided by RPi::I2C
     - Added examples/fade.pl and examples/servo.pl
+    - Added the ON THE WIRE POD section, with I2C bus transaction diagrams
+    - Added the I2C ADDRESSING POD section

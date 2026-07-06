@@ -500,7 +500,8 @@ I<Optional, String>: The I2C bus device. Defaults to C</dev/i2c-1>.
     addr => $int
 
 I<Optional, Integer>: The 7-bit I2C address of the chip, as set by its
-C<A5>-C<A0> address pins. Defaults to C<0x40> (all address pins low).
+C<A5>-C<A0> address pins. Defaults to C<0x40> (all address pins low). See
+L</I2C ADDRESSING>.
 
     freq => $num
 
@@ -805,6 +806,133 @@ repeatable angles.
     0xFA-0xFD   ALL_LED      write every channel at once
     0xFE        PRE_SCALE    PWM frequency divider (writable only in sleep)
     0xFF        TESTMODE     leave it alone
+
+=head2 ON THE WIRE
+
+This is what the registers above look like on the bus as the data is
+clocked in. Time flows left to right, one box per byte, bits go out
+MSB-first, and every 9th clock is an ACK slot:
+
+    S = START    Sr = repeated START    P = STOP
+    A = ACK (receiver pulls SDA low)    N = NACK (master, "no more bytes")
+
+Every transaction opens the same way: SDA falls while SCL is still high
+(that's the START), then the master (the Pi) clocks out the chip address.
+SDA may only change while SCL is low; the chip samples each bit while SCL
+is high. Here's the first byte of every write this module does - address
+C<0x40> shifted left plus the R/W bit, i.e. C<0x80>:
+
+          idle  START   1     0     0     0     0     0     0     0    ACK
+    SDA   ------\_____/-----\_______________________________________________
+    SCL   -----------\_/--\__/--\__/--\__/--\__/--\__/--\__/--\__/--\__/--\_
+
+On the ACK clock the master releases SDA and the chip holds it low (the
+line doesn't visibly move here since bit 0 was already 0 - only the
+driver changes). SCL just keeps running, and the next byte follows the
+same 8-bits-plus-ACK shape until the STOP.
+
+A plain register write - the byte after the address is always the
+register number, which is how the wire indexes into the register map.
+This is the frame L</wake> sends at the end of a bare C<new()>, identical
+to C<< $pca->register(0x00, 0x21) >>:
+
+    +---+-----------+---+-----------+---+-----------+---+---+
+    | S | 1000000 0 | A | 0000 0000 | A | 0010 0001 | A | P |
+    +---+-----------+---+-----------+---+-----------+---+---+
+          chip addr       register        new value
+          0x40 + W=0      0x00 (MODE1)    0x21 (AI|ALLCALL)
+
+A channel update: C<< $servo->servo_us(0, 1500) >> at 50 Hz works out to
+307 ticks, so it becomes C<pwm(0, 0, 307)> - four bytes at C<LED0_ON_L>
+in a single transaction. Because C<new()> set MODE1's auto-increment
+bit, the chip bumps its register pointer after each data byte:
+
+    +---+------+---+------+---+------+---+------+---+------+---+------+---+---+
+    | S | 0x80 | A | 0x06 | A | 0x00 | A | 0x00 | A | 0x33 | A | 0x01 | A | P |
+    +---+------+---+------+---+------+---+------+---+------+---+------+---+---+
+         addr+W     reg        lands in   lands in   lands in   lands in
+                    pointer    0x06       0x07       0x08       0x09
+                               LED0_ON_L  LED0_ON_H  LED0_OFF_L LED0_OFF_H
+
+The outputs don't take the new values byte-by-byte - they latch at the
+STOP, which is what makes channel updates atomic. The 12-bit OFF value
+of 307 (C<0x133>) is split across the L/H register pair; the top three
+bits of the H byte are don't-cares:
+
+    LED0_OFF_L (0x08) = 0x33               LED0_OFF_H (0x09) = 0x01
+    +---+---+---+---+---+---+---+---+      +---+---+---+---+---+---+---+---+
+    | 0 | 0 | 1 | 1 | 0 | 0 | 1 | 1 |      | - | - | - | F | 0 | 0 | 0 | 1 |
+    +---+---+---+---+---+---+---+---+      +---+---+---+---+---+---+---+---+
+               OFF[7:0]                                  ^    OFF[11:8]
+                                                         |
+                                            the 0x1000 "full off" flag
+                                            (clear in this frame)
+
+Reading a register back is a write of just the register pointer, then a
+repeated START with the R bit set. Direction flips mid-transaction:
+during the data byte the I<chip> drives SDA and the master only supplies
+clocks. C<< $pca->register(0xFE) >> after C<< freq => 50 >>:
+
+    +---+------+---+------+---+----+------+---+------+---+---+
+    | S | 0x80 | A | 0xFE | A | Sr | 0x81 | A | 0x79 | N | P |
+    +---+------+---+------+---+----+------+---+------+---+---+
+         addr+W     PRE_SCALE       addr+R     chip      master NACKs the
+                    pointer         (R bit=1)  drives    last byte, then STOPs
+
+L</pwm_read> is the same shape with four data bytes - the master ACKs
+the first three and NACKs the fourth.
+
+The general call reset is the shortest frame the module ever produces:
+L</reset> sends the SWRST magic byte to 7-bit address C<0x00>, and every
+PCA9685 on the bus ACKs it and resets:
+
+    +---+-----------+---+-----------+---+---+
+    | S | 0000000 0 | A | 0000 0110 | A | P |
+    +---+-----------+---+-----------+---+---+
+         general call     SWRST magic
+         addr 0x00        0x06
+
+That's every wire shape the module generates: single-byte write,
+auto-increment block write, pointer-then-read, and the general call.
+
+=head2 I2C ADDRESSING
+
+The chip's 7-bit address is a fixed high bit followed by the six hardware
+address pins, C<A5> down to C<A0>:
+
+    1  A5 A4 A3 A2 A1 A0         the 7-bit address
+    |  32 16  8  4  2  1         each pin's weight when strapped high
+    |
+    fixed - the 0x40 every address starts from
+
+Each address pin B<must> be tied to a rail - GND for low, VCC for high.
+The chip has no internal pull resistors on these pins, so one left
+floating reads an undefined level, and the chip can answer at an address
+you didn't intend - or not at all. Breakout boards typically strap all
+six low and provide solder pads to bridge individual pins high.
+
+All pins grounded gives the default C<0x40>, which is what C<new()>
+assumes when no C<addr> is passed. Pulling a few pins high simply adds
+their weights:
+
+    A5 A4 A3 A2 A1 A0      address
+    -----------------      -------
+     L  L  L  L  L  L       0x40      the default - all pins to GND
+     L  L  L  L  L  H       0x41
+     L  L  L  L  H  L       0x42
+     L  L  L  H  L  H       0x45
+     H  L  L  L  L  L       0x60
+     H  H  L  H  L  H       0x75
+
+Match the straps with the C<addr> param:
+
+    my $pca = RPi::PCA9685->new(addr => 0x45);
+
+Two straps to avoid: C<110000> (C<0x70>) collides with the all-call
+address every PCA9685 answers by default (see L</MULTIPLE DEVICES>), and
+the C<111xxx> combinations land in I2C-reserved space (C<0x78>-C<0x7F>)
+that C<new()> refuses. The strapped value is what leads every transaction
+on the bus, shifted left with the R/W bit appended - see L</ON THE WIRE>.
 
 =head2 MULTIPLE DEVICES
 
