@@ -7,3 +7,4 @@ Revision history for RPi-PCA9685
     - Added examples/fade.pl and examples/servo.pl
     - Added the ON THE WIRE POD section, with I2C bus transaction diagrams
     - Added the I2C ADDRESSING POD section
+    - Limited CI to Linux runners; RPi::I2C is a Linux-only XS dependency
