@@ -759,12 +759,12 @@ Takes no parameters. I<Returns>: C<0>.
 =head2 DEVICE SPECIFICS
 
     - 16 outputs, 12-bit (4096 step) duty resolution each
-    - one shared PWM frequency, 24-1526 Hz
-    - internal 25 MHz oscillator; no crystal required
-    - powers up asleep; new() handles the wake-up
-    - runs at 2.3-5.5V; the Pi's 3.3v is fine
-    - each output sinks up to 25 mA, sources up to 10 mA
-    - the OE pin (active low) is a hardware master output-enable
+    - One shared PWM frequency, 24-1526 Hz
+    - Internal 25 MHz oscillator; no crystal required
+    - Powers up asleep; new() handles the wake-up
+    - Runs at 2.3-5.5V; the Pi's 3.3v is fine
+    - Each output sinks up to 25 mA, sources up to 10 mA
+    - The OE pin (active low) is a hardware master output-enable
 
 Wiring to the Pi: VCC to 3.3v, SDA to GPIO 2 (pin 3), SCL to GPIO 3 (pin 5),
 GND to ground. If the board has a V+ LED/servo supply input, feed it from an
@@ -801,13 +801,13 @@ repeatable angles.
 
 =head2 REGISTER MAP
 
-    0x00        MODE1        power/clock/addressing switches
-    0x01        MODE2        output pin behaviour (invert, drive type)
-    0x02-0x05   SUBADR/ALLCALL alternate I2C addresses
+    0x00        MODE1        Power/clock/addressing switches
+    0x01        MODE2        Output pin behaviour (invert, drive type)
+    0x02-0x05   SUBADR/ALLCALL Alternate I2C addresses
     0x06-0x45   LEDn ON/OFF  4 bytes per channel, starting at 0x06 + 4 * ch
-    0xFA-0xFD   ALL_LED      write every channel at once
+    0xFA-0xFD   ALL_LED      Write every channel at once
     0xFE        PRE_SCALE    PWM frequency divider (writable only in sleep)
-    0xFF        TESTMODE     leave it alone
+    0xFF        TESTMODE     Leave it alone
 
 =head2 ON THE WIRE
 
@@ -815,7 +815,7 @@ This is what the registers above look like on the bus as the data is
 clocked in. Time flows left to right, one box per byte, bits go out
 MSB-first, and every 9th clock is an ACK slot:
 
-    S = START    Sr = repeated START    P = STOP
+    S = START    Sr = Repeated START    P = STOP
     A = ACK (receiver pulls SDA low)    N = NACK (master, "no more bytes")
 
 Every transaction opens the same way: SDA falls while SCL is still high
@@ -824,7 +824,7 @@ SDA may only change while SCL is low; the chip samples each bit while SCL
 is high. Here's the first byte of every write this module does - address
 C<0x40> shifted left plus the R/W bit, i.e. C<0x80>:
 
-          idle  START   1     0     0     0     0     0     0     0    ACK
+          Idle  START   1     0     0     0     0     0     0     0    ACK
     SDA   ------\_____/-----\_______________________________________________
     SCL   -----------\_/--\__/--\__/--\__/--\__/--\__/--\__/--\__/--\__/--\_
 
@@ -841,7 +841,7 @@ to C<< $pca->register(0x00, 0x21) >>:
     +---+-----------+---+-----------+---+-----------+---+---+
     | S | 1000000 0 | A | 0000 0000 | A | 0010 0001 | A | P |
     +---+-----------+---+-----------+---+-----------+---+---+
-          chip addr       register        new value
+          Chip addr       Register        New value
           0x40 + W=0      0x00 (MODE1)    0x21 (AI|ALLCALL)
 
 A channel update: C<< $servo->servo_us(0, 1500) >> at 50 Hz works out to
@@ -852,7 +852,7 @@ bit, the chip bumps its register pointer after each data byte:
     +---+------+---+------+---+------+---+------+---+------+---+------+---+---+
     | S | 0x80 | A | 0x06 | A | 0x00 | A | 0x00 | A | 0x33 | A | 0x01 | A | P |
     +---+------+---+------+---+------+---+------+---+------+---+------+---+---+
-         addr+W     reg        lands in   lands in   lands in   lands in
+         addr+W     Reg        Lands in   Lands in   Lands in   Lands in
                     pointer    0x06       0x07       0x08       0x09
                                LED0_ON_L  LED0_ON_H  LED0_OFF_L LED0_OFF_H
 
@@ -867,7 +867,7 @@ bits of the H byte are don't-cares:
     +---+---+---+---+---+---+---+---+      +---+---+---+---+---+---+---+---+
                OFF[7:0]                                  ^    OFF[11:8]
                                                          |
-                                            the 0x1000 "full off" flag
+                                            The 0x1000 "full off" flag
                                             (clear in this frame)
 
 Reading a register back is a write of just the register pointer, then a
@@ -878,7 +878,7 @@ clocks. C<< $pca->register(0xFE) >> after C<< freq => 50 >>:
     +---+------+---+------+---+----+------+---+------+---+---+
     | S | 0x80 | A | 0xFE | A | Sr | 0x81 | A | 0x79 | N | P |
     +---+------+---+------+---+----+------+---+------+---+---+
-         addr+W     PRE_SCALE       addr+R     chip      master NACKs the
+         addr+W     PRE_SCALE       addr+R     Chip      Master NACKs the
                     pointer         (R bit=1)  drives    last byte, then STOPs
 
 L</pwm_read> is the same shape with four data bytes - the master ACKs
@@ -891,7 +891,7 @@ PCA9685 on the bus ACKs it and resets:
     +---+-----------+---+-----------+---+---+
     | S | 0000000 0 | A | 0000 0110 | A | P |
     +---+-----------+---+-----------+---+---+
-         general call     SWRST magic
+         General call     SWRST magic
          addr 0x00        0x06
 
 That's every wire shape the module generates: single-byte write,
@@ -902,10 +902,10 @@ auto-increment block write, pointer-then-read, and the general call.
 The chip's 7-bit address is a fixed high bit followed by the six hardware
 address pins, C<A5> down to C<A0>:
 
-    1  A5 A4 A3 A2 A1 A0         the 7-bit address
-    |  32 16  8  4  2  1         each pin's weight when strapped high
+    1  A5 A4 A3 A2 A1 A0         The 7-bit address
+    |  32 16  8  4  2  1         Each pin's weight when strapped high
     |
-    fixed - the 0x40 every address starts from
+    Fixed - the 0x40 every address starts from
 
 Each address pin B<must> be tied to a rail - GND for low, VCC for high.
 The chip has no internal pull resistors on these pins, so one left
@@ -917,9 +917,9 @@ All pins grounded gives the default C<0x40>, which is what C<new()>
 assumes when no C<addr> is passed. Pulling a few pins high simply adds
 their weights:
 
-    A5 A4 A3 A2 A1 A0      address
+    A5 A4 A3 A2 A1 A0      Address
     -----------------      -------
-     L  L  L  L  L  L       0x40      the default - all pins to GND
+     L  L  L  L  L  L       0x40      The default - all pins to GND
      L  L  L  L  L  H       0x41
      L  L  L  L  H  L       0x42
      L  L  L  H  L  H       0x45

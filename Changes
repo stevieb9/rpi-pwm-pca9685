@@ -14,3 +14,9 @@ Revision history for RPi-PWM-PCA9685
     - Renamed the distribution from RPi-PCA9685 to RPi-PWM-PCA9685, and the
       module namespace from RPi::PCA9685 to RPi::PWM::PCA9685 (repo:
       rpi-pwm-pca9685), before any CPAN release
+    - Restyled the technical-section point forms to leading capitals to match
+      the sibling dists' convention: DEVICE SPECIFICS bullets, the REGISTER
+      MAP description column, the ON THE WIRE legend and diagram captions, and
+      the I2C ADDRESSING captions. Only leading letters changed (identifiers,
+      hex, numbers and the addr+W/addr+R byte tokens left as-is), so every
+      ASCII diagram's column alignment is preserved
