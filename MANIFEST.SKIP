@@ -35,4 +35,4 @@ BB-Fail/
 cover_db/
 scrap\.pl
 ^\.github/
-^\.github/^\.claude/
+^\.claude/

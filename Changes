@@ -20,3 +20,9 @@ Revision history for RPi-PWM-PCA9685
       the I2C ADDRESSING captions. Only leading letters changed (identifiers,
       hex, numbers and the addr+W/addr+R byte tokens left as-is), so every
       ASCII diagram's column alignment is preserved
+    - Added the drive param to new() ('totem' default, or 'open_drain'), the
+      output drive type, reapplied across reset()
+    - Added sink_mode(), which sets open-drain plus inverted logic for
+      current-sinking LED wiring (eg. a 3.3 V chip sinking 5 V LEDs)
+    - Added the DRIVING LEDS POD section covering sourcing vs sinking wiring
+      and the open-drain requirement

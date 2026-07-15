@@ -26,6 +26,7 @@ use constant {
     MODE1_AI         => 0x20,
     MODE1_SLEEP      => 0x10,
     MODE2_INVRT      => 0x10,
+    MODE2_OUTDRV     => 0x04,
 };
 
 # Public methods
@@ -45,6 +46,12 @@ sub new {
     }
 
     $self->{addr} = defined $args{addr} ? $args{addr} : 0x40;
+
+    if (defined $args{drive} && $args{drive} !~ /^(?:totem|open_drain)$/){
+        croak "drive param must be 'totem' or 'open_drain'";
+    }
+
+    $self->{open_drain} = defined $args{drive} && $args{drive} eq 'open_drain' ? 1 : 0;
 
     $self->{osc_hz} = OSC_HZ;
     $self->{prescale} = 0x1E; # Chip default until _chip_init() reads the real one
@@ -321,6 +328,20 @@ sub servo_us {
 
     return $self->pwm($channel, 0, int($ticks));
 }
+sub sink_mode {
+    my ($self) = @_;
+
+    # Current-sinking wiring (V+ -> LED -> resistor -> pin): open-drain so
+    # an off pin floats instead of driving to VDD (safe when V+ is above
+    # the chip's supply), plus inverted logic so duty maps to brightness
+
+    $self->{open_drain} = 1;
+
+    $self->_outdrv(1);
+    $self->invert(1);
+
+    return 0;
+}
 sub sleep {
     my ($self) = @_;
 
@@ -384,6 +405,11 @@ sub _chip_init {
 
     $self->_reg_write(REG_MODE1, $mode1);
 
+    # Output drive type: totem-pole by default, or open-drain for
+    # current-sinking loads. Reapplied here so it survives reset()
+
+    $self->_outdrv($self->{open_drain});
+
     $self->{prescale} = $self->_reg_read(REG_PRE_SCALE);
 
     $self->wake;
@@ -404,6 +430,25 @@ sub _led_reg {
 
     return REG_ALL_LED_ON_L if $channel == CH_ALL;
     return REG_LED0_ON_L + 4 * $channel;
+}
+sub _outdrv {
+    my ($self, $open_drain) = @_;
+
+    # Read-modify-write so the INVRT bit is left untouched. OUTDRV set is
+    # totem-pole (driven high and low); cleared is open-drain (sink only)
+
+    my $mode2 = $self->_reg_read(REG_MODE2);
+
+    if ($open_drain){
+        $mode2 = ($mode2 & ~MODE2_OUTDRV) & 0xFF;
+    }
+    else {
+        $mode2 |= MODE2_OUTDRV;
+    }
+
+    $self->_reg_write(REG_MODE2, $mode2);
+
+    return 0;
 }
 sub _reg_read {
     my ($self, $reg) = @_;
@@ -456,6 +501,15 @@ controller over the I2C bus
     $pca->full_on(2);           # channel 2 hard on, no PWM
 
     $pca->all_off;
+
+    # Powering an LED, two ways (see DRIVING LEDS)
+
+    # Sourced from the pin:  pin -> resistor -> LED -> GND (totem-pole default)
+    $pca->duty_pct(0, 75);
+
+    # Sunk from a higher rail: V+ -> LED -> resistor -> pin (eg. 5V LED, 3.3V chip)
+    $pca->sink_mode;            # Open-drain + inverted logic
+    $pca->duty_pct(0, 75);
 
     # Servos (the whole chip must run at 50 Hz)
 
@@ -519,6 +573,15 @@ if you've measured it. See L</osc_freq>.
     invert => $bool
 
 I<Optional, Bool>: Invert the output logic of all channels. See L</invert>.
+
+    drive => $str
+
+I<Optional, String>: The output drive type, C<'totem'> (the default) or
+C<'open_drain'>. Totem-pole drives each pin both high and low, and suits
+LEDs powered from the chip's own pins and servo signal lines. Open-drain
+only sinks (an off pin floats), which is what you want when sinking current
+from a supply above the chip's VDD - see L</sink_mode> and L</DRIVING LEDS>.
+The setting is reapplied across L</reset>.
 
 I<Returns>: The L<RPi::PWM::PCA9685> object. Croaks if the bus can't be
 opened or the chip doesn't respond.
@@ -673,7 +736,7 @@ Inverts the output logic of all 16 channels.
 
 Useful when LEDs are wired to be current-sunk (V+ -> LED -> resistor -> pin),
 where the LED is lit while the pin is low. Inverting makes duty cycle mean
-brightness again.
+brightness again. For the full sink-wiring setup, see L</sink_mode>.
 
 I<Parameters>:
 
@@ -682,6 +745,22 @@ I<Parameters>:
 I<Optional, Bool>: True to invert, false for normal logic. Defaults to C<1>.
 
 I<Returns>: C<0> upon success.
+
+=head2 sink_mode
+
+Configures the chip for current-sinking LED wiring in one call: it switches
+the outputs to open-drain and inverts the output logic. Equivalent to
+C<< new(drive => 'open_drain') >> followed by C<< invert(1) >>.
+
+Use this when LEDs (or other loads) are wired V+ -> load -> resistor -> pin
+and powered from a supply above the chip's VDD - for example a 3.3 V chip
+sinking 5 V LEDs. Open-drain lets an off pin float to the external rail
+(within the pins' 5.5 V tolerance) instead of driving it down to VDD, and
+the inversion keeps higher duty meaning brighter. See L</DRIVING LEDS>.
+
+The open-drain setting is remembered and reapplied across L</reset>.
+
+Takes no parameters. I<Returns>: C<0> upon success.
 
 =head2 osc_freq
 
@@ -787,6 +866,51 @@ oscillator:
 
 Because the prescaler is quantised, the actual frequency usually differs from
 the request - L</freq> returns what you really got.
+
+=head2 DRIVING LEDS
+
+There are two ways to wire an LED to a channel, and they want different
+output drive types.
+
+B<Sourcing> - the pin supplies the current:
+
+    pin -> resistor -> LED anode -> LED cathode -> GND
+
+The pin drives high to light the LED. This needs B<totem-pole> outputs (the
+default), and is limited to the ~10 mA a pin can source. Good for indicator
+LEDs powered from the chip itself.
+
+B<Sinking> - an external supply drives the LED, the pin is the return:
+
+    V+ -> LED anode -> LED cathode -> resistor -> pin
+
+The pin sinks up to 25 mA to light the LED, so it handles brighter LEDs, and
+crucially the LED can run from a rail higher than the chip's VDD. The outputs
+are 5.5 V tolerant regardless of VDD, so a chip powered at the Pi's 3.3 V can
+sink LEDs from a 5 V rail (up to 5.5 V) directly.
+
+This B<must> use B<open-drain> outputs. In totem-pole an off pin is driven to
+VDD, which a higher V+ would back-feed through the LED into the chip's supply;
+open-drain lets the off pin float to V+ instead. Sinking also inverts the
+logic sense (the pin is low to light the LED), so the PWM values want
+inverting to make duty mean brightness.
+
+L</sink_mode> sets both at once:
+
+    my $pca = RPi::PWM::PCA9685->new(freq => 1000);
+    $pca->sink_mode;              # Open-drain + inverted, for V+ -> LED -> pin
+    $pca->duty_pct(0, 75);        # 75% brightness
+
+Requirements for the sinking setup:
+
+    - Keep V+ at or below 5.5 V (the pins' absolute tolerance)
+    - Tie the V+ supply's ground to the chip's VSS (shared return)
+    - Size the resistor for <= 25 mA per channel, and mind the package total
+      across all lit channels
+
+For loads beyond 25 mA or above 5.5 V, drive an external transistor from the
+pin instead. Open-drain plus L</invert> also suits an external N-type driver;
+totem-pole plus non-inverted suits a P-type - see the datasheet's section 7.7.
 
 =head2 SERVO OPERATION
 

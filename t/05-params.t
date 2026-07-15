@@ -9,7 +9,7 @@ use RPi::PWM::PCA9685;
 # These exercise the parameter validation and failure paths only, so
 # they run fine on machines with no PCA9685 (or no I2C bus) attached
 
-plan tests => 12;
+plan tests => 14;
 
 my $ok = eval {
     RPi::PWM::PCA9685->new(addr => 999999);
@@ -17,6 +17,13 @@ my $ok = eval {
 };
 is $ok, undef, "new() dies with an out of range addr param";
 like $@, qr/addr param/, "...with a relevant error message";
+
+$ok = eval {
+    RPi::PWM::PCA9685->new(drive => 'bogus');
+    1;
+};
+is $ok, undef, "new() dies with an invalid drive param";
+like $@, qr/drive param/, "...with a relevant error message";
 
 $ok = eval {
     RPi::PWM::PCA9685->new(device => '/dev/nonexistent-i2c');
