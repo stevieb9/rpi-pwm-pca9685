@@ -6,7 +6,7 @@ use warnings;
 use Carp qw(croak);
 use RPi::I2C;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use constant {
     CH_ALL           => 16,
