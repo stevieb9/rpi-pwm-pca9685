@@ -10,7 +10,7 @@ use RPi::PWM::PCA9685;
 # chip logic (prescaler math, register sequencing, servo conversion)
 # gets exercised with no hardware attached
 
-plan tests => 20;
+plan tests => 36;
 
 {
     no warnings 'redefine';
@@ -28,6 +28,27 @@ isa_ok $pca, 'RPi::PWM::PCA9685';
 # mock powers up as the real chip does, MODE1 = 0x11
 
 is MockI2C->peek(0x00), 0x21, "new() clears SLEEP and sets AI in MODE1";
+
+# Read accessors, sampled here while the chip is at its power-on defaults
+
+is $pca->addr, 0x40, "addr() returns the default I2C address";
+is $pca->device, '/dev/i2c-1', "device() returns the default I2C device";
+is $pca->drive, 'totem', "drive() reads totem-pole by default";
+
+{ # status() - a live snapshot hashref
+
+    my $status = $pca->status;
+
+    is ref $status, 'HASH', "status() returns a hashref";
+    is $status->{addr}, 0x40, "status() reports the addr";
+    is $status->{device}, '/dev/i2c-1', "status() reports the device";
+    is $status->{drive}, 'totem', "status() reports the drive type";
+    is $status->{inverted}, 0, "status() reports normal (non-inverted) logic";
+    is $status->{sleeping}, 0, "status() reports the chip awake";
+    is $status->{ext_clock}, 0, "status() reports the internal clock";
+    is $status->{osc_hz}, 25000000, "status() reports the assumed oscillator";
+    ok $status->{freq} > 0, "status() reports a positive freq";
+}
 
 my $freq = $pca->freq(50);
 
@@ -63,18 +84,22 @@ is_deeply [$pca->pwm_read(3)], [5, 1234], "pwm_read() returns what pwm() wrote";
 $pca->invert;
 
 is MockI2C->peek(0x01), 0x14, "invert() sets INVRT in MODE2";
+is $pca->inverted, 1, "inverted() reads back the INVRT bit";
 
 $pca->invert(0);
 
 is MockI2C->peek(0x01), 0x04, "invert(0) clears INVRT";
+is $pca->inverted, 0, "inverted() reflects invert(0)";
 
 $pca->sleep;
 
 ok MockI2C->peek(0x00) & 0x10, "sleep() sets the SLEEP bit";
+is $pca->sleeping, 1, "sleeping() reads back the SLEEP bit";
 
 $pca->wake;
 
 ok ! (MockI2C->peek(0x00) & 0x10), "wake() clears the SLEEP bit";
+is $pca->sleeping, 0, "sleeping() reflects wake()";
 
 eval { $pca->servo_us(0, 25000); };
 like $@, qr/wider than the PWM period/, "servo_us() croaks on a pulse wider than the period";

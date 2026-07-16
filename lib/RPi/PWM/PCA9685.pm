@@ -89,6 +89,10 @@ sub new {
     return $self;
 }
 
+sub addr {
+    my ($self) = @_;
+    return $self->{addr};
+}
 sub all_off {
     my ($self) = @_;
     return $self->pwm(CH_ALL, 0, PWM_FULL);
@@ -101,6 +105,19 @@ sub close {
     $self->{i2c} = undef;
 
     return 0;
+}
+sub device {
+    my ($self) = @_;
+    return $self->{device};
+}
+sub drive {
+    my ($self) = @_;
+
+    # OUTDRV set is totem-pole (driven high and low); cleared is open-drain
+    # (sink only). Read live so it reflects sink_mode() or a raw register()
+    # change, not just what new() was told
+
+    return $self->_reg_read(REG_MODE2) & MODE2_OUTDRV ? 'totem' : 'open_drain';
 }
 sub duty {
     my ($self, $channel, $duty) = @_;
@@ -224,6 +241,14 @@ sub invert {
     $self->_reg_write(REG_MODE2, $mode2);
 
     return 0;
+}
+sub inverted {
+    my ($self) = @_;
+
+    # MODE2 INVRT: output logic is inverted (duty maps to brightness on a
+    # current-sinking load). Read live, the counterpart to invert()
+
+    return $self->_reg_read(REG_MODE2) & MODE2_INVRT ? 1 : 0;
 }
 sub osc_freq {
     my ($self, $hz) = @_;
@@ -385,6 +410,36 @@ sub sleep {
     $self->_reg_write(REG_MODE1, ($mode1 | MODE1_SLEEP) & 0xFF);
 
     return 0;
+}
+sub sleeping {
+    my ($self) = @_;
+
+    # MODE1 SLEEP: the oscillator is stopped and no PWM is generated. Read
+    # live, the counterpart to sleep()/wake()
+
+    return $self->_reg_read(REG_MODE1) & MODE1_SLEEP ? 1 : 0;
+}
+sub status {
+    my ($self) = @_;
+
+    # A single snapshot of everything a status display would want. freq()
+    # re-reads PRE_SCALE and refreshes the cached prescale; one MODE1 read
+    # covers both the ext-clock and sleep bits
+
+    my $freq  = $self->freq;
+    my $mode1 = $self->_reg_read(REG_MODE1);
+
+    return {
+        addr      => $self->{addr},
+        device    => $self->{device},
+        drive     => $self->drive,
+        ext_clock => ($mode1 & MODE1_EXTCLK) ? 1 : 0,
+        freq      => $freq,
+        inverted  => $self->inverted,
+        osc_hz    => $self->{osc_hz},
+        prescale  => $self->{prescale},
+        sleeping  => ($mode1 & MODE1_SLEEP) ? 1 : 0,
+    };
 }
 sub wake {
     my ($self) = @_;
@@ -902,6 +957,64 @@ on C<DESTROY>. The chip's outputs keep running - call L</all_off> first if
 you want everything off.
 
 Takes no parameters. I<Returns>: C<0>.
+
+=head2 status
+
+Returns a hashref snapshotting the chip's current configuration - handy for
+logging, a status display, or asserting state in a test. The live bits
+(C<drive>, C<inverted>, C<sleeping>, C<ext_clock>) are read back from the
+chip's registers, so the snapshot reflects the hardware, not just what this
+object was last told.
+
+Takes no parameters. I<Returns>: a hashref with these keys:
+
+    addr        Integer: the chip's I2C address (eg. 0x40)
+    device      String:  the I2C device path (eg. '/dev/i2c-1')
+    drive       String:  'totem' or 'open_drain' (MODE2 OUTDRV)
+    ext_clock   Bool:    running on the external EXTCLK pin (MODE1 EXTCLK)
+    freq        Number:  the actual quantised PWM frequency in Hz
+    inverted    Bool:    output logic inverted (MODE2 INVRT)
+    osc_hz      Number:  the oscillator speed the math assumes, in Hz
+    prescale    Integer: the PRE_SCALE register value behind freq
+    sleeping    Bool:    the oscillator is stopped (MODE1 SLEEP)
+
+=head2 addr
+
+Returns the chip's I2C address (an integer, eg. C<0x40>), as passed to
+L</new> or its default.
+
+Takes no parameters.
+
+=head2 device
+
+Returns the I2C device path this object is bound to (a string, eg.
+C<'/dev/i2c-1'>), as passed to L</new> or its default.
+
+Takes no parameters.
+
+=head2 drive
+
+Returns the output drive type, read live from the chip's MODE2 register:
+the string C<'totem'> for totem-pole (driven high and low) or
+C<'open_drain'> for open-drain (sink only). The read-back counterpart to the
+C<drive> argument of L</new> and to L</sink_mode>.
+
+Takes no parameters.
+
+=head2 inverted
+
+Returns C<1> if the output logic is inverted (MODE2 INVRT set), C<0> if not,
+read live from the chip. The read-back counterpart to L</invert>.
+
+Takes no parameters.
+
+=head2 sleeping
+
+Returns C<1> if the chip is asleep (MODE1 SLEEP set, oscillator stopped),
+C<0> if it's awake, read live from the chip. The read-back counterpart to
+L</sleep> and L</wake>.
+
+Takes no parameters.
 
 =head1 TECHNICAL INFORMATION
 

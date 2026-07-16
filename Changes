@@ -7,6 +7,13 @@ Revision history for RPi-PWM-PCA9685
     - Added ext_clock(), which switches the timebase to an external clock on
       the EXTCLK pin (up to 50 MHz) and tracks it in the prescaler math;
       reset() undoes the sticky EXTCLK bit and reverts to the internal 25 MHz
+    - Added read accessors addr() and device() for the configured I2C address
+      and device path
+    - Added live state readers drive(), inverted() and sleeping(), the
+      read-back counterparts to sink_mode()/new(), invert() and sleep()/wake()
+    - Added status(), returning a hashref snapshot of the chip's configuration
+      (addr, device, drive, ext_clock, freq, inverted, osc_hz, prescale,
+      sleeping) for logging, status displays and tests
 
 0.01    2026-07-15
     - Auto generated distribution with Dist::Mgr
